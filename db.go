@@ -14,6 +14,9 @@ create table if not exists signer (
 	login text not null,
 	name text not null,
 	avatar text not null,
+	code text not null default "",
+	slug text not null default "",
+	donations integer not null default 0,
 	constraint login_uniq unique (login)
 );`
 )

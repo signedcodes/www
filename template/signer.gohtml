@@ -9,6 +9,51 @@
 
 <p><img src="{{.AvatarURL}}" alt="{{.Name}}" width="200" height="200" /></p>
 
+{{if .Code}}
+<h2>Code</h2>
+
+<pre>
+{{.Code}}
+</pre>
+{{end}}
+
+
+{{if .Fundraise}}
+Supporting {{.Fundraise.Name}}.
+
+{{if .Fundraise.USCitizenOnly}}
+Must be a US citizen to participate.
+{{end}}
+
+<a href="https://secure.actblue.com/donate/{{.Fundraise.Slug}}">Donate ${{.Amount}} now</a>
+
+TODO: pass donation amount and refcode to actblue
+
+{{end}}
+
+
+{{if .Owner}}
+
+{{if .Code }}
+Code cannot be edited. If this is a problem, please email us at TODO
+{{else}}
+TODO TEXT FORM AND EXPLANATION HERE
+{{end}}
+
+{{if .Fundraise}}
+Fundraising selection cannot be edited. If this is a problem, please email us at TODO
+{{else}}
+TODO options dropdown and explanation here
+
+{{range .Fundraises}}
+{{.Name}} {{.Slug}} {{.USCitizenOnly}}
+{{end}}
+
+{{end}}
+
+TODO submit button here
+
+{{end}}
 
 </body>
 </html>

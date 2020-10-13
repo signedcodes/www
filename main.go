@@ -31,8 +31,12 @@ func main() {
 	err := os.MkdirAll(dataDir, 0777)
 	checkFatal(err)
 
+	sessionsDir := dataDir + "sessions"
+	err = os.MkdirAll(sessionsDir, 0777)
+	checkFatal(err)
+
 	srv := new(Server)
-	srv.Sessions = sessions.NewFilesystemStore(dataDir+"sessions", SessionsSecret())
+	srv.Sessions = sessions.NewFilesystemStore(sessionsDir, SessionsSecret())
 	srv.DBPool, err = sqlitex.Open(dataDir+"db.sqlite3", 0, 32)
 	checkFatal(err)
 	err = srv.createTables()
@@ -66,15 +70,19 @@ func (s *Server) HandleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
-	// Look whether that signer exists.
+	// Look up whether that signer exists.
 	// TODO: throw an in-memory cache in front of this
-	const signerByLoginQuery = `select login, name, avatar from signer where login = ? limit 1;`
-	var login, name, avatar string
+	const signerByLoginQuery = `select login, name, avatar, code, slug, donations from signer where login = ? limit 1;`
+	var login, name, avatar, code, slug string
+	var donations int
 	var found bool
 	step := func(stmt *sqlite.Stmt) error {
 		login = stmt.ColumnText(0)
 		name = stmt.ColumnText(1)
 		avatar = stmt.ColumnText(2)
+		code = stmt.ColumnText(3)
+		slug = stmt.ColumnText(4)
+		donations = stmt.ColumnInt(5)
 		found = true
 		return nil
 	}
@@ -95,20 +103,43 @@ func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: show as 404 if signer hasn't selected code, etc.
+	// Check whether the signed in user owns this page.
+	session, err := s.Sessions.Get(r, "user")
+	checkLog(err)
+	if err != nil {
+		http.Error(w, "failed to look up session", http.StatusInternalServerError)
+		return
+	}
 
-	// TODO: render page differently if that's the user that is signed in
-	// session, err := s.Sessions.Get(r, "user")
+	owner := session.Values["login"] == login
+
+	if !owner && (slug == "" || code == "") {
+		// Not the owner, and the owner hasn't configured their code and slug yet.
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	fundraise := FundraiseForSlug[slug]
 
 	t := template.Must(template.ParseFiles("template/signer.gohtml"))
 	dot := &struct {
-		Login     string
-		Name      string
-		AvatarURL string
+		Login      string
+		Name       string
+		AvatarURL  string
+		Fundraise  *Fundraise
+		Fundraises []Fundraise
+		Owner      bool
+		Code       string
+		Amount     int
 	}{
-		Login:     login,
-		Name:      name,
-		AvatarURL: avatar,
+		Login:      login,
+		Name:       name,
+		AvatarURL:  avatar,
+		Owner:      owner,
+		Code:       code,
+		Amount:     (donations + 1) * 100,
+		Fundraise:  &fundraise,
+		Fundraises: Fundraises,
 	}
 	err = t.Execute(w, dot)
 	checkLog(err)
