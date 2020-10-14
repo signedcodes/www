@@ -22,3 +22,10 @@ func SessionsSecret() []byte {
 	}
 	return []byte(SessionsSecretKey)
 }
+
+func CSRFSecret() []byte {
+	if len(CSRFSecretKey) == 0 {
+		return []byte(os.Getenv("CSRF_SECRET_KEY"))
+	}
+	return []byte(CSRFSecretKey)
+}

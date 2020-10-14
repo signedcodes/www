@@ -11,12 +11,16 @@
 
 {{if .Code}}
 <h2>Code</h2>
-
-<pre>
-{{.Code}}
-</pre>
+<pre>{{.Code}}</pre>
 {{end}}
 
+{{if .PreviewURL}}
+<a href="{{.RenderedURL}}">
+<img src="{{.PreviewURL}}" alt="rendered source code" width="400" height="600" />
+</a>
+{{else}}
+Preview not available yet. Please check back.
+{{end}}
 
 {{if .Fundraise}}
 Supporting {{.Fundraise.Name}}.
@@ -25,7 +29,7 @@ Supporting {{.Fundraise.Name}}.
 Must be a US citizen to participate.
 {{end}}
 
-<a href="https://secure.actblue.com/donate/{{.Fundraise.Slug}}">Donate ${{.Amount}} now</a>
+<a href="https://secure.actblue.com/donate/signed-codes-{{.Fundraise.Slug}}">Donate ${{.Amount}} now</a>
 
 TODO: pass donation amount and refcode to actblue
 
@@ -34,26 +38,70 @@ TODO: pass donation amount and refcode to actblue
 
 {{if .Owner}}
 
+<hr/>
+
+<h2>Set up your code for signing</h2>
+
+How it works:
+
+<ul>
+<li>Enter some code below and select a benefactor. These choices cannot be changed.</li>
+<li>We'll render your code. This involves a human, so it takes a little while.</li>
+<li>Share this URL.</li>
+</ul>
+
+TODO: add share on twitter/other
+<br/>
+
+<form method="POST">
+{{ $.CSRF }}
+
+<h2>Code</h2>
+
 {{if .Code }}
 Code cannot be edited. If this is a problem, please email us at TODO
 {{else}}
-TODO TEXT FORM AND EXPLANATION HERE
+<p>Enter some code you wrote here. You may interpret code loosely.</p>
+
+<p>Put something here that is your doing and that people will love.</p>
+
+<p>This <strong>is not editable</strong> after you submit, so choose wisely.</p>
+
+<textarea name="code" placeholder="your code here" rows="10" cols="120"/>
+</textarea>
 {{end}}
+
+<h2>Benefactor</h2>
 
 {{if .Fundraise}}
-Fundraising selection cannot be edited. If this is a problem, please email us at TODO
+<p>Fundraising selection cannot be edited. If this is a problem, please email us at TODO</p>
 {{else}}
-TODO options dropdown and explanation here
+
+Select who should benefit from donations.
+
+Some options are only available if you are a US citizen, due to campaign finance laws.
 
 {{range .Fundraises}}
-{{.Name}} {{.Slug}} {{.USCitizenOnly}}
-{{end}}
+<p>
+    <input id="{{.Slug}}" type="radio" name="fundraise" value="{{.Slug}}">
+    <label for="{{.Slug}}">{{.Name}}{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
+    </label>
+</p>
+{{end}} {{/* end range .Fundraises */}}
 
-{{end}}
+{{end}} {{/* if .Fundraise */}}
 
-TODO submit button here
+{{/*TODO: hide submit button when nothing needs submitting*/}}
 
-{{end}}
+<input type="submit" value="Submit"/>
+</form>
+
+
+{{ else }} {{/* if .Owner */}}
+
+{{/* TODO: log in link if no current session?*/}}
+
+{{end}} {{/* if .Owner */}}
 
 </body>
 </html>

@@ -11,16 +11,20 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"crawshaw.io/sqlite"
 	"crawshaw.io/sqlite/sqlitex"
+	"github.com/gorilla/csrf"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 )
 
 var flagDev = flag.Bool("dev", false, "run as dev environment")
+
+var renderedDir string
 
 func main() {
 	flag.Parse()
@@ -33,6 +37,10 @@ func main() {
 
 	sessionsDir := dataDir + "sessions"
 	err = os.MkdirAll(sessionsDir, 0777)
+	checkFatal(err)
+
+	renderedDir := dataDir + "rendered"
+	err = os.MkdirAll(renderedDir, 0777)
 	checkFatal(err)
 
 	srv := new(Server)
@@ -50,11 +58,21 @@ func main() {
 	m.HandleFunc("/volunteer", srv.HandleVolunteer)
 	m.HandleFunc("/signup", srv.HandleSignUp)
 	m.HandleFunc("/github-callback", srv.HandleGitHubCallback)
-	m.PathPrefix("/").HandlerFunc(srv.HandleSigner)
+	m.HandleFunc("/unrendered", srv.HandleUnrendered) // TODO: throw behind a strong basic auth?
+	m.HandleFunc("/rendered/{login:[a-zA-Z0-9\\-]+}.{ext:(png|pdf)", srv.HandleRendered)
+	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
+	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
 	// TODO: https when not -dev
 	addr := ":58347"
 	log.Printf("listening on %v", addr)
-	err = http.ListenAndServe(addr, m)
+
+	CSRF := csrf.Protect(
+		CSRFSecret(),
+		csrf.Secure(!*flagDev),
+		csrf.SameSite(csrf.SameSiteLaxMode),
+	)
+	handler := CSRF(m)
+	err = http.ListenAndServe(addr, handler)
 	checkFatal(err)
 }
 
@@ -69,30 +87,49 @@ func (s *Server) HandleHome(w http.ResponseWriter, r *http.Request) {
 	checkLog(err)
 }
 
-func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
-	// Look up whether that signer exists.
+// Signer is a transient representation of a code signer from the DB.
+type Signer struct {
+	login, name, avatar, code, slug string
+	donations                       int
+	owner                           bool // owner reports whether this signer owns the loaded page
+}
+
+func (s *Server) lookUpSigner(r *http.Request) (signer Signer, found bool, err error) {
 	// TODO: throw an in-memory cache in front of this
-	const signerByLoginQuery = `select login, name, avatar, code, slug, donations from signer where login = ? limit 1;`
-	var login, name, avatar, code, slug string
-	var donations int
-	var found bool
-	step := func(stmt *sqlite.Stmt) error {
-		login = stmt.ColumnText(0)
-		name = stmt.ColumnText(1)
-		avatar = stmt.ColumnText(2)
-		code = stmt.ColumnText(3)
-		slug = stmt.ColumnText(4)
-		donations = stmt.ColumnInt(5)
-		found = true
-		return nil
-	}
 	conn := s.DBPool.Get(r.Context())
 	if conn == nil {
+		err = errors.New("disconnected")
 		// remote hung up before we got a conn, no reason to continue
 		return
 	}
 	defer s.DBPool.Put(conn)
-	err := sqlitex.Exec(conn, signerByLoginQuery, step, strings.TrimPrefix(r.URL.Path, "/"))
+
+	const signerByLoginQuery = `select login, name, avatar, code, slug, donations from signer where login = ? limit 1;`
+	step := func(stmt *sqlite.Stmt) error {
+		signer.login = stmt.ColumnText(0)
+		signer.name = stmt.ColumnText(1)
+		signer.avatar = stmt.ColumnText(2)
+		signer.code = stmt.ColumnText(3)
+		signer.slug = stmt.ColumnText(4)
+		signer.donations = stmt.ColumnInt(5)
+		found = true
+		return nil
+	}
+	err = sqlitex.Exec(conn, signerByLoginQuery, step, strings.TrimPrefix(r.URL.Path, "/"))
+	if err != nil {
+		return
+	}
+
+	session, err := s.Sessions.Get(r, "user")
+	checkLog(err)
+	err = nil // don't fail on session errors
+	signer.owner = session.Values["login"] == signer.login
+	return
+}
+
+func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
+	// Signer just posted the form. Hurray!
+	signer, found, err := s.lookUpSigner(r)
 	if err != nil {
 		log.Printf("signer query failed: %v", err)
 		http.Error(w, "failed to execute db lookup", http.StatusInternalServerError)
@@ -104,42 +141,103 @@ func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check whether the signed in user owns this page.
-	session, err := s.Sessions.Get(r, "user")
-	checkLog(err)
-	if err != nil {
-		http.Error(w, "failed to look up session", http.StatusInternalServerError)
+	if !signer.owner {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	owner := session.Values["login"] == login
+	slug := strings.TrimSpace(r.PostFormValue("fundraise"))
+	code := r.PostFormValue("code")
 
-	if !owner && (slug == "" || code == "") {
+	conn := s.DBPool.Get(r.Context())
+	if conn == nil {
+		// request cancelled, give up
+		return
+	}
+	defer s.DBPool.Put(conn)
+
+	if signer.code == "" && code != "" {
+		const updateCodeQuery = `update signer set code = ? where login = ?;`
+		if err := sqlitex.Exec(conn, updateCodeQuery, nil, code, signer.login); err != nil {
+			log.Printf("update code query failed: %v", err)
+			http.Error(w, "failed to execute code db query", http.StatusInternalServerError)
+			return
+		}
+		signer.code = code
+	}
+	if signer.slug == "" && slug != "" {
+		const updateCodeQuery = `update signer set slug = ? where login = ?;`
+		if err := sqlitex.Exec(conn, updateCodeQuery, nil, slug, signer.login); err != nil {
+			log.Printf("update slug query failed: %v", err)
+			http.Error(w, "failed to execute slug db query", http.StatusInternalServerError)
+			return
+		}
+		signer.slug = slug
+	}
+
+	renderSignerPage(w, r, signer)
+}
+
+func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
+	// Look up whether that signer exists.
+	signer, found, err := s.lookUpSigner(r)
+	if err != nil {
+		log.Printf("signer query failed: %v", err)
+		http.Error(w, "failed to execute db lookup", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	renderSignerPage(w, r, signer)
+}
+
+func renderSignerPage(w http.ResponseWriter, r *http.Request, signer Signer) {
+	if !signer.owner && (signer.slug == "" || signer.code == "") {
 		// Not the owner, and the owner hasn't configured their code and slug yet.
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	fundraise := FundraiseForSlug[slug]
+	var fundraise *Fundraise
+	if f, ok := FundraiseForSlug[signer.slug]; ok {
+		fundraise = &f
+	}
+
+	var previewURL, renderedURL string
+	previewPath := filepath.Join(renderedDir, signer.login+".png")
+	fi, err := os.Stat(previewPath)
+	if err == nil && fi.Mode().IsRegular() {
+		previewURL = "/rendered/" + signer.login + ".png"
+		renderedURL = "/rendered/" + signer.login + ".pdf"
+	}
 
 	t := template.Must(template.ParseFiles("template/signer.gohtml"))
 	dot := &struct {
-		Login      string
-		Name       string
-		AvatarURL  string
-		Fundraise  *Fundraise
-		Fundraises []Fundraise
-		Owner      bool
-		Code       string
-		Amount     int
+		Login       string
+		Name        string
+		AvatarURL   string
+		Fundraise   *Fundraise
+		Fundraises  []Fundraise
+		Owner       bool
+		Code        string
+		Amount      int
+		PreviewURL  string
+		RenderedURL string
+		CSRF        template.HTML
 	}{
-		Login:      login,
-		Name:       name,
-		AvatarURL:  avatar,
-		Owner:      owner,
-		Code:       code,
-		Amount:     (donations + 1) * 100,
-		Fundraise:  &fundraise,
-		Fundraises: Fundraises,
+		Login:       signer.login,
+		Name:        signer.name,
+		AvatarURL:   signer.avatar,
+		Owner:       signer.owner,
+		Code:        signer.code,
+		Amount:      (signer.donations + 1) * 100,
+		Fundraise:   fundraise,
+		Fundraises:  Fundraises,
+		PreviewURL:  previewURL,
+		RenderedURL: renderedURL,
+		CSRF:        csrf.TemplateField(r),
 	}
 	err = t.Execute(w, dot)
 	checkLog(err)
@@ -312,6 +410,16 @@ func (s *Server) HandleVolunteer(w http.ResponseWriter, r *http.Request) {
 	t := template.Must(template.ParseFiles("template/volunteer.gohtml"))
 	err := t.Execute(w, nil)
 	checkLog(err)
+}
+
+func (s *Server) HandleRendered(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	path := filepath.Join(renderedDir, vars["login"]+"."+vars["ext"])
+	http.ServeFile(w, r, path)
+}
+
+func (s *Server) HandleUnrendered(w http.ResponseWriter, r *http.Request) {
+	// TODO: look up all signer entries, find ones with code but no renderings, display those
 }
 
 func checkFatal(err error) {
