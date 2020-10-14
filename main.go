@@ -62,6 +62,7 @@ func main() {
 	m.HandleFunc("/unrendered", srv.HandleUnrendered) // TODO: throw behind a strong basic auth?
 	m.HandleFunc("/donate/{login:[a-zA-Z0-9\\-]+}/{amount:[0-9]+", srv.HandleDonate)
 	m.HandleFunc("/rendered/{login:[a-zA-Z0-9\\-]+}.{ext:(png|pdf)", srv.HandleRendered)
+	m.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
 	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
 	// TODO: https when not -dev
