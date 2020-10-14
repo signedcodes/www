@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +60,7 @@ func main() {
 	m.HandleFunc("/signup", srv.HandleSignUp)
 	m.HandleFunc("/github-callback", srv.HandleGitHubCallback)
 	m.HandleFunc("/unrendered", srv.HandleUnrendered) // TODO: throw behind a strong basic auth?
+	m.HandleFunc("/donate/{login:[a-zA-Z0-9\\-]+}/{amount:[0-9]+", srv.HandleDonate)
 	m.HandleFunc("/rendered/{login:[a-zA-Z0-9\\-]+}.{ext:(png|pdf)", srv.HandleRendered)
 	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
 	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
@@ -94,7 +96,11 @@ type Signer struct {
 	owner                           bool // owner reports whether this signer owns the loaded page
 }
 
-func (s *Server) lookUpSigner(r *http.Request) (signer Signer, found bool, err error) {
+func (s *Signer) Amount() int {
+	return (s.donations + 1) * 100
+}
+
+func (s *Server) lookUpSigner(r *http.Request, login string) (signer Signer, found bool, err error) {
 	// TODO: throw an in-memory cache in front of this
 	conn := s.DBPool.Get(r.Context())
 	if conn == nil {
@@ -115,7 +121,7 @@ func (s *Server) lookUpSigner(r *http.Request) (signer Signer, found bool, err e
 		found = true
 		return nil
 	}
-	err = sqlitex.Exec(conn, signerByLoginQuery, step, strings.TrimPrefix(r.URL.Path, "/"))
+	err = sqlitex.Exec(conn, signerByLoginQuery, step, login)
 	if err != nil {
 		return
 	}
@@ -129,7 +135,7 @@ func (s *Server) lookUpSigner(r *http.Request) (signer Signer, found bool, err e
 
 func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
 	// Signer just posted the form. Hurray!
-	signer, found, err := s.lookUpSigner(r)
+	signer, found, err := s.lookUpSigner(r, strings.TrimPrefix(r.URL.Path, "/"))
 	if err != nil {
 		log.Printf("signer query failed: %v", err)
 		http.Error(w, "failed to execute db lookup", http.StatusInternalServerError)
@@ -180,7 +186,7 @@ func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
 	// Look up whether that signer exists.
-	signer, found, err := s.lookUpSigner(r)
+	signer, found, err := s.lookUpSigner(r, strings.TrimPrefix(r.URL.Path, "/"))
 	if err != nil {
 		log.Printf("signer query failed: %v", err)
 		http.Error(w, "failed to execute db lookup", http.StatusInternalServerError)
@@ -232,7 +238,7 @@ func renderSignerPage(w http.ResponseWriter, r *http.Request, signer Signer) {
 		AvatarURL:   signer.avatar,
 		Owner:       signer.owner,
 		Code:        signer.code,
-		Amount:      (signer.donations + 1) * 100,
+		Amount:      signer.Amount(),
 		Fundraise:   fundraise,
 		Fundraises:  Fundraises,
 		PreviewURL:  previewURL,
@@ -416,6 +422,48 @@ func (s *Server) HandleRendered(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	path := filepath.Join(renderedDir, vars["login"]+"."+vars["ext"])
 	http.ServeFile(w, r, path)
+}
+
+func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	signer, found, err := s.lookUpSigner(r, vars["login"])
+	if err != nil {
+		log.Printf("signer query failed: %v", err)
+		http.Error(w, "failed to execute db lookup", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	amount, err := strconv.Atoi(vars["amount"])
+	if err != nil {
+		log.Printf("bad amount %v: %v", vars["amount"], err)
+		http.Error(w, "bad amount", http.StatusBadRequest)
+		return
+	}
+
+	if signer.Amount() != amount {
+		// The amount has changed between when the page rendered and now. Bummer.
+		// TODO: render a page explaining what happened.
+		// For the moment--speed speed speed--redirect back to the page,
+		// which will reflect the new donation amount.
+		// Hope the user will try again.
+		http.Redirect(w, r, "/"+signer.login, http.StatusFound)
+		return
+	}
+
+	// TODO: check that amount hasn't changed; if it has, alert the user.
+	// TODO: look up slug from login, generate opaque refcode, store in db
+
+	params := make(url.Values)
+	params.Set("refcode", "TODO")         // TODO!
+	params.Set("“amount", vars["amount"]) // TODO!
+	// Redirect to:
+	slug := "TODO"
+	url := "https://secure.actblue.com/donate/signed-codes-" + slug + "?" + params.Encode()
+	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func (s *Server) HandleUnrendered(w http.ResponseWriter, r *http.Request) {
