@@ -1,1 +1,41 @@
 /* comment */
+
+html body {
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.intro {
+    margin-top: 40px;
+}
+.visual{
+    text-align:left;
+    width:90%;
+    max-width:960px;
+    margin:0 auto;
+    padding:0 10px 0 0;
+}
+.visual h1{
+    padding:0;
+}
+.poster img{
+    background-size: contain;
+    max-width:450px;
+    width:100%;
+    height: auto;
+    margin-top:20px;
+    border: 2px;
+    border-style: solid;
+    border-color: grey;
+
+}
+.footer{
+    width:100%;
+    margin-top: 20px;
+}
+.footer .content{
+    text-align:left;
+    width:90%;
+    max-width:960px;
+    margin:0 auto;
+    padding:20px;
+}
