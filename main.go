@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -455,15 +457,37 @@ func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: check that amount hasn't changed; if it has, alert the user.
-	// TODO: look up slug from login, generate opaque refcode, store in db
+	conn := s.DBPool.Get(r.Context())
+	if conn == nil {
+		// user went away :(
+		return
+	}
+	defer s.DBPool.Put(conn)
+
+	buf := make([]byte, 16)
+	_, err = rand.Reader.Read(buf)
+	checkLog(err)
+	if err != nil {
+		// Very, very unlikely
+		http.Error(w, "crypto/rand failed", http.StatusInternalServerError)
+		return
+	}
+	opaque := hex.EncodeToString(buf)
+	const createRefcodeQuery = `insert into refcode (opaque, login, amount) values (?, ?, ?);`
+
+	err = sqlitex.Exec(conn, createRefcodeQuery, nil, opaque, signer.login, amount)
+	if err != nil {
+		log.Printf("failed to insert refcode %v into db: %v", signer.login, err)
+		http.Error(w, "failed to insert refcode into db", http.StatusInternalServerError)
+		return
+	}
 
 	params := make(url.Values)
-	params.Set("refcode", "TODO")         // TODO!
-	params.Set("“amount", vars["amount"]) // TODO!
+	params.Set("refcode", opaque)
+	params.Set("amount", vars["amount"])
+
 	// Redirect to:
-	slug := "TODO"
-	url := "https://secure.actblue.com/donate/signed-codes-" + slug + "?" + params.Encode()
+	url := "https://secure.actblue.com/donate/signed-codes-" + signer.slug + "?" + params.Encode()
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
