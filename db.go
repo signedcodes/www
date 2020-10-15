@@ -9,32 +9,45 @@ import (
 const (
 	createSignerTable = `
 create table if not exists signer (
-	id integer not null primary key,
+	login text not null primary key,
 	created datetime default (datetime('now')),
-	login text not null,
 	name text not null,
+	email text not null,
 	avatar text not null,
-	code text not null default "",
-	slug text not null default "",
-	donations integer not null default 0,
-	constraint login_uniq unique (login)
+	link text not null
+);`
+
+	// Snippets are bits of code that a signer will sign.
+	// Each snippet has some `code` that is written by a `signer`,
+	// has a `slug` to indicate the benefactor,
+	// has a `number` of prints available,
+	// and has a donation `amount` per print.
+	createSnippetTable = `
+create table if not exists snippet (
+	id text not null primary key,
+	created datetime default (datetime('now')),
+	signer text not null,
+	code text not null,
+	comment text not null,
+	slug text not null,
+	quantity integer not null,
+	amount integer not null
 );`
 
 	createRefcodeTable = `
 create table if not exists refcode (
-	id integer not null primary key,
+	id text not null primary key,
 	created datetime default (datetime('now')),
-	opaque text not null,
 	login text not null,
-	amount integer not null,
-	constraint opaque_uniq unique (opaque)
+	snippet text not null,
+	recipient text
 );`
 )
 
 func (s *Server) createTables() error {
 	conn := s.DBPool.Get(context.Background())
 	defer s.DBPool.Put(conn)
-	for _, sql := range []string{createSignerTable, createRefcodeTable} {
+	for _, sql := range []string{createSignerTable, createSnippetTable, createRefcodeTable} {
 		if err := sqlitex.Exec(conn, sql, nil); err != nil {
 			return err
 		}

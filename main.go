@@ -42,7 +42,7 @@ func main() {
 	err = os.MkdirAll(sessionsDir, 0777)
 	checkFatal(err)
 
-	renderedDir := dataDir + "rendered"
+	renderedDir = dataDir + "rendered"
 	err = os.MkdirAll(renderedDir, 0777)
 	checkFatal(err)
 
@@ -62,8 +62,8 @@ func main() {
 	m.HandleFunc("/signup", srv.HandleSignUp)
 	m.HandleFunc("/github-callback", srv.HandleGitHubCallback)
 	m.HandleFunc("/unrendered", srv.HandleUnrendered) // TODO: throw behind a strong basic auth?
-	m.HandleFunc("/donate/{login:[a-zA-Z0-9\\-]+}/{amount:[0-9]+", srv.HandleDonate)
-	m.HandleFunc("/rendered/{login:[a-zA-Z0-9\\-]+}.{ext:(png|pdf)", srv.HandleRendered)
+	m.HandleFunc("/donate/{login:[a-zA-Z0-9\\-]+}/{id:[a-z0-9]+}", srv.HandleDonate)
+	m.HandleFunc("/rendered/{id:[a-z0-9]+}.{ext:p..}", srv.HandleRendered)
 	m.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
 	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
@@ -94,46 +94,129 @@ func (s *Server) HandleHome(w http.ResponseWriter, r *http.Request) {
 
 // Signer is a transient representation of a code signer from the DB.
 type Signer struct {
-	login, name, avatar, code, slug string
-	donations                       int
-	owner                           bool // owner reports whether this signer owns the loaded page
+	Login    string
+	Name     string
+	Email    string
+	Avatar   string
+	Link     string
+	Owner    bool // owner reports whether this signer owns the loaded page
+	Snippets []*Snippet
 }
 
-func (s *Signer) Amount() int {
-	return (s.donations + 1) * 100
+type Snippet struct {
+	ID       string
+	Code     string
+	Comment  string
+	Slug     string
+	Quantity int
+	Amount   int
+
+	// filled in by populate
+	PreviewURL  string
+	RenderedURL string
+	Available   int
 }
 
-func (s *Server) lookUpSigner(r *http.Request, login string) (signer Signer, found bool, err error) {
+func (s *Snippet) Fundraise() Fundraise {
+	return FundraiseForSlug[s.Slug]
+}
+
+// populate populates other snippet fields
+func (s *Snippet) populate(conn *sqlite.Conn) error {
+	used := 0
+	const refcodeBySnippetQuery = `select recipient, created from refcode where snippet = ?;`
+	step := func(stmt *sqlite.Stmt) error {
+		recipient := stmt.ColumnText(0)
+		if recipient != "" {
+			// Donation completed
+			return nil
+		}
+		created := stmt.ColumnText(1)
+		then, err := time.Parse("2006-01-02 15:04:05", created)
+		checkLog(err)
+		if err != nil {
+			return err
+		}
+		if time.Since(then) > 5*time.Minute {
+			// Give people five minutes to complete their donation.
+			return nil
+		}
+		used++
+		return nil
+	}
+	err := sqlitex.Exec(conn, refcodeBySnippetQuery, step, s.ID)
+	if err != nil {
+		return err
+	}
+
+	s.Available = s.Quantity - used
+
+	previewPath := filepath.Join(renderedDir, s.ID+".png")
+	fi, err := os.Stat(previewPath)
+	log.Printf("STAT %v: %v %v ", previewPath, fi, err)
+	if err == nil && fi.Mode().IsRegular() {
+		s.PreviewURL = "/rendered/" + s.ID + ".png"
+		s.RenderedURL = "/rendered/" + s.ID + ".pdf"
+	}
+
+	return nil
+}
+
+func (s *Server) lookUpSigner(r *http.Request, login string) (*Signer, bool, error) {
 	// TODO: throw an in-memory cache in front of this
 	conn := s.DBPool.Get(r.Context())
 	if conn == nil {
-		err = errors.New("disconnected")
 		// remote hung up before we got a conn, no reason to continue
-		return
+		return nil, false, errors.New("disconnected")
 	}
 	defer s.DBPool.Put(conn)
 
-	const signerByLoginQuery = `select login, name, avatar, code, slug, donations from signer where login = ? limit 1;`
+	signer := new(Signer)
+	var found bool
+	const signerByLoginQuery = `select login, name, email, avatar, link from signer where login = ? limit 1;`
 	step := func(stmt *sqlite.Stmt) error {
-		signer.login = stmt.ColumnText(0)
-		signer.name = stmt.ColumnText(1)
-		signer.avatar = stmt.ColumnText(2)
-		signer.code = stmt.ColumnText(3)
-		signer.slug = stmt.ColumnText(4)
-		signer.donations = stmt.ColumnInt(5)
+		signer.Login = stmt.ColumnText(0)
+		signer.Name = stmt.ColumnText(1)
+		signer.Email = stmt.ColumnText(2)
+		signer.Avatar = stmt.ColumnText(3)
+		signer.Link = stmt.ColumnText(4)
 		found = true
 		return nil
 	}
-	err = sqlitex.Exec(conn, signerByLoginQuery, step, login)
+	err := sqlitex.Exec(conn, signerByLoginQuery, step, login)
 	if err != nil {
-		return
+		return nil, false, err
+	}
+	if !found {
+		return nil, false, nil
+	}
+
+	const snippetsBySignerQuery = `select id, code, comment, slug, quantity, amount from snippet where signer = ?;`
+	step = func(stmt *sqlite.Stmt) error {
+		snippet := &Snippet{
+			ID:       stmt.ColumnText(0),
+			Code:     stmt.ColumnText(1),
+			Comment:  stmt.ColumnText(2),
+			Slug:     stmt.ColumnText(3),
+			Quantity: stmt.ColumnInt(4),
+			Amount:   stmt.ColumnInt(5),
+		}
+		err := snippet.populate(conn)
+		if err != nil {
+			return err
+		}
+		signer.Snippets = append(signer.Snippets, snippet)
+		return nil
+	}
+	err = sqlitex.Exec(conn, snippetsBySignerQuery, step, signer.Login)
+	if err != nil {
+		return nil, false, err
 	}
 
 	session, err := s.Sessions.Get(r, "user")
 	checkLog(err)
-	err = nil // don't fail on session errors
-	signer.owner = session.Values["login"] == signer.login
-	return
+	signer.Owner = session.Values["login"] == signer.Login
+	return signer, true, nil
 }
 
 func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
@@ -150,13 +233,44 @@ func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check whether the signed in user owns this page.
-	if !signer.owner {
+	if !signer.Owner {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	slug := strings.TrimSpace(r.PostFormValue("fundraise"))
+	amount, ok := toAmount(r.PostFormValue("amount"))
+	if !ok {
+		badRequest(w, nil, "could not parse amount %q", r.PostFormValue("amount"))
+		return
+	}
+	if amount < 50 || amount > 2500 {
+		badRequest(w, nil, "bad amount %q", r.PostFormValue("amount"))
+		return
+	}
+
+	quantity, ok := toAmount(r.PostFormValue("quantity"))
+	if !ok {
+		badRequest(w, nil, "could not parse quantity %q", r.PostFormValue("quantity"))
+		return
+	}
+	if quantity < 1 || quantity > 100 {
+		badRequest(w, nil, "bad quantity %q", r.PostFormValue("quantity"))
+		return
+	}
+
+	slug := r.PostFormValue("fundraise")
+	if _, ok := FundraiseForSlug[slug]; !ok {
+		badRequest(w, nil, "unrecognized donation recipient %v", slug)
+		return
+	}
+
 	code := r.PostFormValue("code")
+	if strings.TrimSpace(code) == "" {
+		badRequest(w, nil, "empty code")
+		return
+	}
+
+	comment := r.PostFormValue("comment")
 
 	conn := s.DBPool.Get(r.Context())
 	if conn == nil {
@@ -165,24 +279,29 @@ func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.DBPool.Put(conn)
 
-	if signer.code == "" && code != "" {
-		const updateCodeQuery = `update signer set code = ? where login = ?;`
-		if err := sqlitex.Exec(conn, updateCodeQuery, nil, code, signer.login); err != nil {
-			log.Printf("update code query failed: %v", err)
-			http.Error(w, "failed to execute code db query", http.StatusInternalServerError)
-			return
-		}
-		signer.code = code
+	id := generateOpaqueID()
+	const insertSnippetQuery = `insert into snippet (id, signer, code, comment, slug, quantity, amount) values (?, ?, ?, ?, ?, ?, ?);`
+	err = sqlitex.Exec(conn, insertSnippetQuery, nil, id, signer.Login, code, comment, slug, quantity, amount)
+	if err != nil {
+		log.Printf("insert snippet query failed: %v", err)
+		http.Error(w, "failed to execute slug db query", http.StatusInternalServerError)
+		return
 	}
-	if signer.slug == "" && slug != "" {
-		const updateCodeQuery = `update signer set slug = ? where login = ?;`
-		if err := sqlitex.Exec(conn, updateCodeQuery, nil, slug, signer.login); err != nil {
-			log.Printf("update slug query failed: %v", err)
-			http.Error(w, "failed to execute slug db query", http.StatusInternalServerError)
-			return
-		}
-		signer.slug = slug
+
+	snippet := &Snippet{
+		ID:       id,
+		Code:     code,
+		Comment:  comment,
+		Slug:     slug,
+		Quantity: quantity,
+		Amount:   amount,
 	}
+	err = snippet.populate(conn)
+	if err != nil {
+		internalServerError(w, err, "populate on insert snippet failed")
+		return
+	}
+	signer.Snippets = append(signer.Snippets, snippet)
 
 	renderSignerPage(w, r, signer)
 }
@@ -202,53 +321,32 @@ func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
 	renderSignerPage(w, r, signer)
 }
 
-func renderSignerPage(w http.ResponseWriter, r *http.Request, signer Signer) {
-	if !signer.owner && (signer.slug == "" || signer.code == "") {
-		// Not the owner, and the owner hasn't configured their code and slug yet.
+func renderSignerPage(w http.ResponseWriter, r *http.Request, signer *Signer) {
+	if !signer.Owner && len(signer.Snippets) == 0 {
+		// Not the owner, and the owner hasn't configured any snippets (yet?)
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	var fundraise *Fundraise
-	if f, ok := FundraiseForSlug[signer.slug]; ok {
-		fundraise = &f
-	}
-
-	var previewURL, renderedURL string
-	previewPath := filepath.Join(renderedDir, signer.login+".png")
-	fi, err := os.Stat(previewPath)
-	if err == nil && fi.Mode().IsRegular() {
-		previewURL = "/rendered/" + signer.login + ".png"
-		renderedURL = "/rendered/" + signer.login + ".pdf"
-	}
-
 	t := template.Must(template.ParseFiles("template/signer.gohtml"))
 	dot := &struct {
-		Login       string
-		Name        string
-		AvatarURL   string
-		Fundraise   *Fundraise
-		Fundraises  []Fundraise
-		Owner       bool
-		Code        string
-		Amount      int
-		PreviewURL  string
-		RenderedURL string
-		CSRF        template.HTML
+		Signer          *Signer
+		Fundraises      []Fundraise
+		CSRF            template.HTML
+		DefaultQuantity int
+		Quantities      []int
+		DefaultAmount   int
+		Amounts         []int
 	}{
-		Login:       signer.login,
-		Name:        signer.name,
-		AvatarURL:   signer.avatar,
-		Owner:       signer.owner,
-		Code:        signer.code,
-		Amount:      signer.Amount(),
-		Fundraise:   fundraise,
-		Fundraises:  Fundraises,
-		PreviewURL:  previewURL,
-		RenderedURL: renderedURL,
-		CSRF:        csrf.TemplateField(r),
+		Signer:          signer,
+		Fundraises:      Fundraises,
+		CSRF:            csrf.TemplateField(r),
+		DefaultQuantity: 10,
+		Quantities:      []int{1, 5, 10, 100},
+		DefaultAmount:   250,
+		Amounts:         []int{50, 100, 250, 500, 1000, 2500},
 	}
-	err = t.Execute(w, dot)
+	err := t.Execute(w, dot)
 	checkLog(err)
 }
 
@@ -344,6 +442,7 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		HTMLURL   string `json:"html_url"`
 		Type      string `json:"type"`
 		Name      string `json:"name"`
+		Email     string `json:"email"`
 		CreatedAt string `json:"created_at"`
 	}
 	err = json.Unmarshal(body, &userInfoResponse)
@@ -382,11 +481,12 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.DBPool.Put(conn)
 
-	const createSignerQuery = `insert into signer (login, name, avatar) values (?, ?, ?);`
-
-	err = sqlitex.Exec(conn, createSignerQuery, nil, userInfoResponse.Login, userInfoResponse.Name, userInfoResponse.AvatarURL)
+	const createSignerQuery = `insert into signer (login, name, email, avatar, link) values (?, ?, ?, ?, ?);`
+	err = sqlitex.Exec(conn, createSignerQuery, nil,
+		userInfoResponse.Login, userInfoResponse.Name, userInfoResponse.Email,
+		userInfoResponse.AvatarURL, userInfoResponse.HTMLURL)
 	var sqlerr sqlite.Error
-	if errors.As(err, &sqlerr) && sqlerr.Code == sqlite.SQLITE_CONSTRAINT_UNIQUE {
+	if errors.As(err, &sqlerr) && sqlerr.Code == sqlite.SQLITE_CONSTRAINT_PRIMARYKEY {
 		// Already exists; ignore.
 	} else if err != nil {
 		log.Printf("failed to insert signer %v into db: %v", userInfoResponse.Login, err)
@@ -423,7 +523,7 @@ func (s *Server) HandleVolunteer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleRendered(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	path := filepath.Join(renderedDir, vars["login"]+"."+vars["ext"])
+	path := filepath.Join(renderedDir, vars["id"]+"."+vars["ext"])
 	http.ServeFile(w, r, path)
 }
 
@@ -436,24 +536,31 @@ func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		http.Error(w, "not found", http.StatusNotFound)
+		http.Error(w, "signer not found", http.StatusNotFound)
 		return
 	}
 
-	amount, err := strconv.Atoi(vars["amount"])
-	if err != nil {
-		log.Printf("bad amount %v: %v", vars["amount"], err)
-		http.Error(w, "bad amount", http.StatusBadRequest)
+	// Find the snippet.
+	var snippet *Snippet
+	for _, s := range signer.Snippets {
+		if s.ID == vars["id"] {
+			snippet = s
+			break
+		}
+	}
+
+	if snippet == nil {
+		http.Error(w, "snippet not found", http.StatusNotFound)
 		return
 	}
 
-	if signer.Amount() != amount {
-		// The amount has changed between when the page rendered and now. Bummer.
+	if snippet.Available <= 0 {
+		// There are none available. That changed between when the page rendered and now. Bummer.
 		// TODO: render a page explaining what happened.
 		// For the moment--speed speed speed--redirect back to the page,
 		// which will reflect the new donation amount.
 		// Hope the user will try again.
-		http.Redirect(w, r, "/"+signer.login, http.StatusFound)
+		http.Redirect(w, r, "/"+signer.Login, http.StatusFound)
 		return
 	}
 
@@ -464,35 +571,62 @@ func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.DBPool.Put(conn)
 
-	buf := make([]byte, 16)
-	_, err = rand.Reader.Read(buf)
-	checkLog(err)
+	const createRefcodeQuery = `insert into refcode (id, login, snippet) values (?, ?, ?);`
+	opaque := generateOpaqueID()
+	err = sqlitex.Exec(conn, createRefcodeQuery, nil, opaque, signer.Login, snippet.ID)
 	if err != nil {
-		// Very, very unlikely
-		http.Error(w, "crypto/rand failed", http.StatusInternalServerError)
-		return
-	}
-	opaque := hex.EncodeToString(buf)
-	const createRefcodeQuery = `insert into refcode (opaque, login, amount) values (?, ?, ?);`
-
-	err = sqlitex.Exec(conn, createRefcodeQuery, nil, opaque, signer.login, amount)
-	if err != nil {
-		log.Printf("failed to insert refcode %v into db: %v", signer.login, err)
-		http.Error(w, "failed to insert refcode into db", http.StatusInternalServerError)
+		internalServerError(w, err, "failed to insert refcode for %v into db", signer.Login)
 		return
 	}
 
 	params := make(url.Values)
 	params.Set("refcode", opaque)
-	params.Set("amount", vars["amount"])
+	params.Set("amount", strconv.Itoa(snippet.Amount))
 
 	// Redirect to:
-	url := "https://secure.actblue.com/donate/signed-codes-" + signer.slug + "?" + params.Encode()
+	url := "https://secure.actblue.com/donate/signed-codes-" + snippet.Slug + "?" + params.Encode()
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func (s *Server) HandleUnrendered(w http.ResponseWriter, r *http.Request) {
 	// TODO: look up all signer entries, find ones with code but no renderings, display those
+}
+
+func generateOpaqueID() string {
+	buf := make([]byte, 16)
+	_, err := rand.Reader.Read(buf)
+	checkLog(err)
+	if err != nil {
+		// Very, very unlikely
+		return ""
+	}
+	return hex.EncodeToString(buf)
+}
+
+func badRequest(w http.ResponseWriter, err error, msg string, args ...interface{}) {
+	httpError(w, http.StatusBadRequest, err, msg, args...)
+}
+
+func internalServerError(w http.ResponseWriter, err error, msg string, args ...interface{}) {
+	httpError(w, http.StatusInternalServerError, err, msg, args...)
+}
+
+func httpError(w http.ResponseWriter, code int, err error, msg string, args ...interface{}) {
+	s := fmt.Sprintf(msg, args...)
+	log.Printf("%s: %v", s, err)
+	http.Error(w, s, code)
+}
+
+func toAmount(s string) (int, bool) {
+	x, err := strconv.Atoi(s)
+	if err == nil {
+		return x, true
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err == nil && float64(int(f)) == f {
+		return int(f), true
+	}
+	return 0, false
 }
 
 func checkFatal(err error) {

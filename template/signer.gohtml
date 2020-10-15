@@ -1,97 +1,122 @@
 <html>
 <head>
-<title>signed.codes: {{.Login}}</title>
+<title>signed.codes: {{.Signer.Login}}</title>
 </head>
 <body>
 
-<p>{{.Login}}</p>
-<p>{{.Name}}</p>
+<p><img src="{{.Signer.Avatar}}" alt="{{.Signer.Name}}" width="200" height="200" /></p>
 
-<p><img src="{{.AvatarURL}}" alt="{{.Name}}" width="200" height="200" /></p>
+<p><a href="{{.Signer.Link}}">@{{.Signer.Login}}</a> ({{.Signer.Name}})</p>
 
-{{if .Code}}
+{{range $snippet := .Signer.Snippets}}
+
 <h2>Code</h2>
-<pre>{{.Code}}</pre>
+<pre>{{$snippet.Code}}</pre>
+
+{{ if $snippet.Comment }}
+<h2>Comment</h2>
+<p>Comment from @{{$.Signer.Login}}: {{$snippet.Comment}}</p>
 {{end}}
 
-{{if .PreviewURL}}
-<a href="{{.RenderedURL}}">
-<img src="{{.PreviewURL}}" alt="rendered source code" width="400" height="600" />
+<h2>Preview</h2>
+
+TODO: describe in sumptuous terms
+
+{{if $snippet.PreviewURL}}
+<a href="{{$snippet.RenderedURL}}">
+<img src="{{$snippet.PreviewURL}}" alt="{{$snippet.Code}}" width="400" height="600" />
 </a>
 {{else}}
-Preview not available yet. Please check back.
+<p>Preview not available yet. A human somewhere is making it.</p>
 {{end}}
 
-{{if .Fundraise}}
-Supporting {{.Fundraise.Name}}.
+<h2>Supporting</h2>
 
-{{if .Fundraise.USCitizenOnly}}
-Must be a US citizen to participate.
+{{with $snippet.Fundraise}}
+
+<p><a href="/donate/{{$.Signer.Login}}/{{$snippet.ID}}">Donate ${{$snippet.Amount}} USD (or more) to {{.Name}}</a>. {{if .USCitizenOnly}}<strong>Must be a US citizen to donate.</strong> {{end}}</p>
+
+{{end}} {{/* with $snippet.Fundraise */}}
+
+<p>{{$snippet.Available}} of {{$snippet.Quantity}} available</p>
+
+{{if $snippet.Available}}
+<a href="/donate/{{$.Signer.Login}}/{{$snippet.ID}}">Donate ${{.Amount}} now</a>
 {{end}}
 
-<a href="/donate/{{.Login}}/{{.Amount}}">Donate ${{.Amount}} now</a>
+{{else}} {{/* range .Snippets */}}
 
-TODO: pass donation amount and refcode to actblue
+<p>No signed codes available yet.</p>
 
-{{end}}
+{{end}} {{/* range .Snippets */}}
 
 
-{{if .Owner}}
+{{if .Signer.Owner}}
 
 <hr/>
 
-<h2>Set up your code for signing</h2>
-
-How it works:
-
-<ul>
-<li>Enter some code below and select a benefactor. These choices cannot be changed.</li>
-<li>We'll render your code. This involves a human, so it takes a little while.</li>
-<li>Share this URL.</li>
-</ul>
-
-TODO: add share on twitter/other
-<br/>
+{{if .Signer.Snippets}}
+<h2>Add another signed code</h2>
+{{else}}
+<h2>Add a signed code</h2>
+{{end}}
 
 <form method="POST">
 {{ $.CSRF }}
 
 <h2>Code</h2>
 
-{{if .Code }}
-Code cannot be edited. If this is a problem, please email us at TODO
-{{else}}
-<p>Enter some code you wrote here. You may interpret code loosely.</p>
-
+<p>Enter some code you wrote here. You may interpret "code" loosely.</p>
 <p>Put something here that is your doing and that people will love.</p>
-
-<p>This <strong>is not editable</strong> after you submit, so choose wisely.</p>
 
 <textarea name="code" placeholder="your code here" rows="10" cols="120"/>
 </textarea>
-{{end}}
+
+<h2>Comment</h2>
+
+<p>(Optional) Whatever you write here will show up on the website only. Maybe explain what the code is, or its history.</p>
+
+<p><input type="text" name="comment"></p>
 
 <h2>Benefactor</h2>
 
-{{if .Fundraise}}
-<p>Fundraising selection cannot be edited. If this is a problem, please email us at TODO</p>
-{{else}}
-
 Select who should benefit from donations.
 
-Some options are only available if you are a US citizen, due to campaign finance laws.
+Some options are only available if you are a US citizen due to campaign finance laws.
 
 {{range .Fundraises}}
 <p>
     <input id="{{.Slug}}" type="radio" name="fundraise" value="{{.Slug}}">
-    <label for="{{.Slug}}">{{.Name}}{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
+    <label for="{{.Slug}}"><a href="{{.Link}}">{{.Name}}</a>{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
     </label>
 </p>
 {{end}} {{/* end range .Fundraises */}}
 
-{{end}} {{/* if .Fundraise */}}
+If you want to request a new benefactor, please email TODO-email-address.
+We can add any organization or campaign found on <a href="https://secure.actblue.com/directory">ActBlue</a>.
 
-{{/*TODO: hide submit button when nothing needs submitting*/}}
+
+<h2>Quantity and donation amount</h2>
+
+<p>
+<label for="quantity">Quantity available (min 1, max 100, recommended 10): </label>
+<input type="text" name="quantity" id="quantity">
+</p>
+
+
+<p>
+<label for="amount">Donation amount each in USD (min 50, max 2500, recommended 250): </label>
+<input type="text" name="amount" id="amount">
+</p>
+
+<h2>Review</h2>
+
+<p>None of this is editable after you hit submit, so double-check everything.</p>
+<p>After you hit submit, we'll render your code. This involves a human, so it takes time.</p>
+<p>We'll email you at your GitHub email address when the rendering is complete.</p>
+<p>Later, we'll snail mail you copies to wet sign.</p>
+
+<p>TODO more words and links etc about sharing</p>
 
 <input type="submit" value="Submit"/>
 </form>
