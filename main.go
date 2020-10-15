@@ -61,7 +61,7 @@ func main() {
 	//   /josharian: auction page for person with GitHub handle josharian
 	m := mux.NewRouter()
 	m.HandleFunc("/", srv.HandleHome)
-	m.HandleFunc("/volunteer", srv.HandleVolunteer)
+	m.HandleFunc("/help", srv.HandleHelp)
 	m.HandleFunc("/signup", srv.HandleSignUp)
 	m.HandleFunc("/github-callback", srv.HandleGitHubCallback)
 	m.HandleFunc("/donate/{login:[a-zA-Z0-9\\-]+}/{id:[a-z0-9]+}", srv.HandleDonate)
@@ -530,8 +530,8 @@ func (s *Server) HandleSignUp(w http.ResponseWriter, r *http.Request) {
 	checkLog(err)
 }
 
-func (s *Server) HandleVolunteer(w http.ResponseWriter, r *http.Request) {
-	t := template.Must(template.ParseFiles("template/volunteer.gohtml"))
+func (s *Server) HandleHelp(w http.ResponseWriter, r *http.Request) {
+	t := template.Must(template.ParseFiles("template/help.gohtml"))
 	err := t.Execute(w, nil)
 	checkLog(err)
 }
