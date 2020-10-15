@@ -1,8 +1,25 @@
 <html>
 <head>
 <title>signed.codes: {{.Signer.Login}}</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/static/picnic.min.css" />
+<link rel="stylesheet" href="/static/sc.css" />
 </head>
 <body>
+    <nav> 
+        <a href="/" class="brand"><span>Signed codes</span></a> 
+        <input id="bmenu" type="checkbox" class="show"> 
+        <label for="bmenu" class="burger toggle pseudo button">Menu</label> 
+        <div class="menu"> 
+            <a href="signup" class="pseudo button">Donate your own code</a> 
+            <a href="volunteer" class="pseudo button">Volunteer to help</a>
+        </div>
+    </nav>
+
+    <main class="intro">
+        <div class="visual flex one-900">
+
 
 <p><img src="{{.Signer.Avatar}}" alt="{{.Signer.Name}}" width="200" height="200" /></p>
 
@@ -128,5 +145,12 @@ We can add any organization or campaign found on <a href="https://secure.actblue
 
 {{end}} {{/* if .Owner */}}
 
+</div>
+</main>
+<footer class="footer">
+<div class="content">
+    <p>&copy; 2020 Signed Codes</p>
+</div>
+</footer>
 </body>
 </html>
