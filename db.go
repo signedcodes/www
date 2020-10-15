@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 
+	"crawshaw.io/sqlite"
 	"crawshaw.io/sqlite/sqlitex"
 )
 
@@ -60,5 +62,12 @@ func (s *Server) createTables() error {
 
 	const createRefcodeFixture = `insert into refcode (id, login, snippet) values (?, ?, ?);`
 	err := sqlitex.Exec(conn, createRefcodeFixture, nil, "mettler", "nobody", "testing 1 2")
-	return err
+	var sqlerr sqlite.Error
+	if errors.As(err, &sqlerr) && sqlerr.Code == sqlite.SQLITE_CONSTRAINT_PRIMARYKEY {
+		// Already exists; ignore.
+	} else if err != nil {
+		return err
+	}
+
+	return nil
 }
