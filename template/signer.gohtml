@@ -91,7 +91,7 @@ TODO: describe in sumptuous terms
 
 <h2>Comment</h2>
 
-<p>(Optional) Whatever you write here will show up on the website only. Maybe explain what the code is, or its history.</p>
+<p>(Optional) Whatever you write here will show up on this website only. Maybe explain what the code is, or its history.</p>
 
 <p><input type="text" name="comment"></p>
 
@@ -109,14 +109,14 @@ Some options are only available if you are a US citizen due to campaign finance 
 </p>
 {{end}} {{/* end range .Fundraises */}}
 
-If you want to request a new benefactor, please email TODO-email-address.
+If you want to request a new benefactor, please email <a href="mailto:hello@signed.codes">hello@signed.codes</a>.
 We can add any organization or campaign found on <a href="https://secure.actblue.com/directory">ActBlue</a>.
 
 
 <h2>Quantity and donation amount</h2>
 
 <p>
-<label for="quantity">Quantity available (min 1, max 100, recommended 10): </label>
+<label for="quantity">Quantity you will sign (min 1, max 100, recommended 10): </label>
 <input type="text" name="quantity" id="quantity">
 </p>
 
@@ -129,11 +129,9 @@ We can add any organization or campaign found on <a href="https://secure.actblue
 <h2>Review</h2>
 
 <p>None of this is editable after you hit submit, so double-check everything.</p>
-<p>After you hit submit, we'll render your code. This involves a human, so it takes time.</p>
-<p>We'll email you at your GitHub email address when the rendering is complete.</p>
+<p>After you hit submit, we'll hand-render your code. This involves a human, so it takes time.</p>
+<p>We'll email you at <a href="mailto:{{.Signer.Email}}">{{.Signer.Email}}</a> when the rendering is complete.</p>
 <p>Later, we'll snail mail you copies to wet sign.</p>
-
-<p>TODO more words and links etc about sharing</p>
 
 <input type="submit" value="Submit"/>
 </form>
