@@ -350,6 +350,7 @@ func renderSignerPage(w http.ResponseWriter, r *http.Request, signer *Signer) {
 		Quantities      []int
 		DefaultAmount   int
 		Amounts         []int
+		ClientID        string
 	}{
 		Signer:          signer,
 		Fundraises:      Fundraises,
@@ -358,6 +359,7 @@ func renderSignerPage(w http.ResponseWriter, r *http.Request, signer *Signer) {
 		Quantities:      []int{1, 5, 10, 100},
 		DefaultAmount:   250,
 		Amounts:         []int{50, 100, 250, 500, 1000, 2500},
+		ClientID:        GitHubOauthClientID(),
 	}
 	err := t.Execute(w, dot)
 	checkLog(err)

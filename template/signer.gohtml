@@ -21,44 +21,44 @@
         <div class="visual flex one-900">
 
 
-<p><img src="{{.Signer.Avatar}}" alt="{{.Signer.Name}}" width="200" height="200" /></p>
+<p>
+    <img src="{{.Signer.Avatar}}" alt="{{.Signer.Name}}" width="150" height="150" />
+    <h1><a href="{{.Signer.Link}}">@{{.Signer.Login}}</a> ({{.Signer.Name}})</h1>
+</p>
 
-<p><a href="{{.Signer.Link}}">@{{.Signer.Login}}</a> ({{.Signer.Name}})</p>
+<h3>
+Want signed code by @{{.Signer.Login}}?
+Donate to the campaign or non-profit of their choice.
+</h3>
 
-{{range $snippet := .Signer.Snippets}}
 
-<h2>Code</h2>
-<pre>{{$snippet.Code}}</pre>
+{{range $i, $snippet := .Signer.Snippets}}
 
-{{ if $snippet.Comment }}
-<h2>Comment</h2>
-<p>Comment from @{{$.Signer.Login}}: {{$snippet.Comment}}</p>
-{{end}}
+<h2>Signed code {{$i}}</h2>
 
-<h2>Preview</h2>
-
-TODO: describe in sumptuous terms
 
 {{if $snippet.PreviewURL}}
 <a href="{{$snippet.RenderedURL}}">
 <img src="{{$snippet.PreviewURL}}" alt="{{$snippet.Code}}" width="400" height="600" />
 </a>
 {{else}}
-<p>Preview not available yet. A human somewhere is making it.</p>
+<pre>{{$snippet.Code}}</pre>
 {{end}}
 
-<h2>Supporting</h2>
 
-{{with $snippet.Fundraise}}
 
-<p><a href="/donate/{{$.Signer.Login}}/{{$snippet.ID}}">Donate ${{$snippet.Amount}} USD (or more) to {{.Name}}</a>. {{if .USCitizenOnly}}<strong>Must be a US citizen to donate.</strong> {{end}}</p>
-
-{{end}} {{/* with $snippet.Fundraise */}}
-
-<p>{{$snippet.Available}} of {{$snippet.Quantity}} available</p>
+{{ if $snippet.Comment }}
+<p>Comment from @{{$.Signer.Login}} about this code: "{{$snippet.Comment}}"</p>
+{{end}}
 
 {{if $snippet.Available}}
-<a href="/donate/{{$.Signer.Login}}/{{$snippet.ID}}">Donate ${{.Amount}} now</a>
+
+{{with $snippet.Fundraise}}
+<p>To get a copy of this signed code, <a href="/donate/{{$.Signer.Login}}/{{$snippet.ID}}">donate ${{$snippet.Amount}} USD (or more) to {{.Name}}</a>. {{if .USCitizenOnly}}<strong>Must be a US citizen to donate.</strong> {{end}} ({{$snippet.Available}} of {{$snippet.Quantity}} available) We will use your ActBlue contact information for fulfillment.</p>
+{{end}} {{/* with $snippet.Fundraise */}}
+
+{{else}}
+All copies of this signed code are spoken for.
 {{end}}
 
 {{else}} {{/* range .Snippets */}}
@@ -68,9 +68,9 @@ TODO: describe in sumptuous terms
 {{end}} {{/* range .Snippets */}}
 
 
-{{if .Signer.Owner}}
-
 <hr/>
+
+{{if .Signer.Owner}}
 
 {{if .Signer.Snippets}}
 <h2>Add another signed code</h2>
@@ -103,9 +103,10 @@ Some options are only available if you are a US citizen due to campaign finance 
 
 {{range .Fundraises}}
 <p>
-    <input id="{{.Slug}}" type="radio" name="fundraise" value="{{.Slug}}">
-    <label for="{{.Slug}}"><a href="{{.Link}}">{{.Name}}</a>{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
-    </label>
+<label>
+    <input id="{{.Slug}}" type="radio" name="fundraise" value="{{.Slug}}" class="fundraise-radio">
+    <a href="{{.Link}}">{{.Name}}</a>{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
+</label>
 </p>
 {{end}} {{/* end range .Fundraises */}}
 
@@ -138,6 +139,9 @@ We can add any organization or campaign found on <a href="https://secure.actblue
 
 
 {{ else }} {{/* if .Owner */}}
+
+<br/>
+<p>(Are you @{{.Signer.Login}}? <a href="https://github.com/login/oauth/authorize?client_id={{.ClientID}}">Log in.</a>)</p>
 
 {{/* TODO: log in link if no current session?*/}}
 
