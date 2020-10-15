@@ -1,0 +1,16 @@
+<html>
+<head>
+<title>signed.codes: admin csv upload</title>
+</head>
+<body>
+
+{{.Msg}}
+
+<form enctype="multipart/form-data" method="POST">
+    {{ $.CSRF }}
+
+    <p><input type="file" id="file" name="file"></p>
+    <p><input type="submit" value="Upload"></p>
+</form>
+
+</body>

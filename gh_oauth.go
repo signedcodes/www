@@ -29,3 +29,17 @@ func CSRFSecret() []byte {
 	}
 	return []byte(CSRFSecretKey)
 }
+
+func AdminUsername() string {
+	if len(AdminUser) == 0 {
+		return os.Getenv("ADMIN_USERNAME")
+	}
+	return AdminUser
+}
+
+func AdminPassword() string {
+	if len(AdminPass) == 0 {
+		return os.Getenv("ADMIN_PASSWORD")
+	}
+	return AdminPass
+}

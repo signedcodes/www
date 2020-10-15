@@ -40,17 +40,25 @@ create table if not exists refcode (
 	created datetime default (datetime('now')),
 	login text not null,
 	snippet text not null,
-	recipient text
+	raised integer,
+	donor text
 );`
 )
+
+var dbinit = []string{
+	createSignerTable, createSnippetTable, createRefcodeTable,
+}
 
 func (s *Server) createTables() error {
 	conn := s.DBPool.Get(context.Background())
 	defer s.DBPool.Put(conn)
-	for _, sql := range []string{createSignerTable, createSnippetTable, createRefcodeTable} {
-		if err := sqlitex.Exec(conn, sql, nil); err != nil {
+	for _, sql := range dbinit {
+		if err := sqlitex.ExecTransient(conn, sql, nil); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	const createRefcodeFixture = `insert into refcode (id, login, snippet) values (?, ?, ?);`
+	err := sqlitex.Exec(conn, createRefcodeFixture, nil, "mettler", "nobody", "testing 1 2")
+	return err
 }

@@ -2,18 +2,21 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -61,12 +64,18 @@ func main() {
 	m.HandleFunc("/volunteer", srv.HandleVolunteer)
 	m.HandleFunc("/signup", srv.HandleSignUp)
 	m.HandleFunc("/github-callback", srv.HandleGitHubCallback)
-	m.HandleFunc("/unrendered", srv.HandleUnrendered) // TODO: throw behind a strong basic auth?
 	m.HandleFunc("/donate/{login:[a-zA-Z0-9\\-]+}/{id:[a-z0-9]+}", srv.HandleDonate)
 	m.HandleFunc("/rendered/{id:[a-z0-9]+}.{ext:p..}", srv.HandleRendered)
 	m.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
+
+	admin := m.PathPrefix("/admin/").Subrouter()
+	admin.HandleFunc("/csv", srv.HandleAdminCSV)
+	admin.HandleFunc("/unrendered", srv.HandleAdminUnrendered)
+	admin.Use(srv.authAdmin)
+
 	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
 	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
+
 	// TODO: https when not -dev
 	addr := ":58347"
 	log.Printf("listening on %v", addr)
@@ -124,11 +133,12 @@ func (s *Snippet) Fundraise() Fundraise {
 // populate populates other snippet fields
 func (s *Snippet) populate(conn *sqlite.Conn) error {
 	used := 0
-	const refcodeBySnippetQuery = `select recipient, created from refcode where snippet = ?;`
+	const refcodeBySnippetQuery = `select raised, created from refcode where snippet = ?;`
 	step := func(stmt *sqlite.Stmt) error {
-		recipient := stmt.ColumnText(0)
-		if recipient != "" {
-			// Donation completed
+		raised := stmt.ColumnInt(0)
+		if raised >= s.Amount {
+			// Donation completed.
+			used++
 			return nil
 		}
 		created := stmt.ColumnText(1)
@@ -137,11 +147,15 @@ func (s *Snippet) populate(conn *sqlite.Conn) error {
 		if err != nil {
 			return err
 		}
-		if time.Since(then) > 5*time.Minute {
-			// Give people five minutes to complete their donation.
+		if time.Since(then) < 24*time.Hour {
+			// Assume that I upload CSVs once every 24 hours.
+			// So even though this refcode hasn't raised enough,
+			// it might just be because I'm slow.
+			used++
 			return nil
 		}
-		used++
+		// Been 24+ hours and refcode hasn't raised.
+		// Assume it is unused.
 		return nil
 	}
 	err := sqlitex.Exec(conn, refcodeBySnippetQuery, step, s.ID)
@@ -153,7 +167,6 @@ func (s *Snippet) populate(conn *sqlite.Conn) error {
 
 	previewPath := filepath.Join(renderedDir, s.ID+".png")
 	fi, err := os.Stat(previewPath)
-	log.Printf("STAT %v: %v %v ", previewPath, fi, err)
 	if err == nil && fi.Mode().IsRegular() {
 		s.PreviewURL = "/rendered/" + s.ID + ".png"
 		s.RenderedURL = "/rendered/" + s.ID + ".pdf"
@@ -588,8 +601,112 @@ func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
-func (s *Server) HandleUnrendered(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleAdminUnrendered(w http.ResponseWriter, r *http.Request) {
 	// TODO: look up all signer entries, find ones with code but no renderings, display those
+}
+
+func (s *Server) HandleAdminCSV(w http.ResponseWriter, r *http.Request) {
+	var msg string
+
+	if r.Method == "POST" {
+		r.ParseMultipartForm(10 << 20)
+		ff, _, err := r.FormFile("file")
+		if err != nil {
+			badRequest(w, err, "upload failed: %v", err)
+			return
+		}
+
+		type entry struct {
+			amount int
+			donor  string
+		}
+		entries := make(map[string]*entry)
+
+		reader := csv.NewReader(ff)
+		for first := true; ; first = false {
+			record, err := reader.Read()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				badRequest(w, err, "csv parse failed: %v", err)
+				return
+			}
+			if first {
+				if !reflect.DeepEqual(record, csvheader) {
+					log.Printf("csv header\n got=%q\nwant=%q", record, csvheader)
+					badRequest(w, err, "csv bad header")
+					return
+				}
+				continue
+			}
+			refcode := record[9]
+			amount, ok := toAmount(record[2])
+			if !ok {
+				badRequest(w, nil, "csv amount=%q", record[2])
+				return
+			}
+			donor := record[20]
+			e := entries[refcode]
+			if e == nil {
+				e = new(entry)
+				e.donor = donor
+				e.amount = amount
+				entries[refcode] = e
+			} else {
+				if e.donor != donor {
+					badRequest(w, nil, "donor mismatch refcode=%q, %q != %q", refcode, e.donor, donor)
+					return
+				}
+				e.amount += amount
+			}
+		}
+
+		conn := s.DBPool.Get(r.Context())
+		if conn == nil {
+			// remote hung up?!
+			return
+		}
+		defer s.DBPool.Put(conn)
+
+		for refcode, e := range entries {
+			const updateRefcodeQuery = `update refcode set raised = ?, donor = ? where id = ?;`
+			err := sqlitex.Exec(conn, updateRefcodeQuery, nil, e.amount, e.donor, refcode)
+			if err != nil {
+				internalServerError(w, err, "update refcode failed on %v", refcode)
+				return
+			}
+		}
+
+		msg = fmt.Sprintf("updated %d entries", len(entries))
+	}
+
+	t := template.Must(template.ParseFiles("template/admin_csv.gohtml"))
+	dot := &struct {
+		Msg  string
+		CSRF template.HTML
+	}{
+		Msg:  msg,
+		CSRF: csrf.TemplateField(r),
+	}
+	err := t.Execute(w, dot)
+	checkLog(err)
+}
+
+func (s *Server) authAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok {
+			unauthorized(w, nil, "auth required")
+			return
+		}
+		// TODO: rate limit, don't leak info via timing side channel, etc.
+		if user != AdminUsername() || pass != AdminPassword() {
+			unauthorized(w, nil, "bad auth")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func generateOpaqueID() string {
@@ -601,6 +718,11 @@ func generateOpaqueID() string {
 		return ""
 	}
 	return hex.EncodeToString(buf)
+}
+
+func unauthorized(w http.ResponseWriter, err error, msg string, args ...interface{}) {
+	w.Header().Set("WWW-Authenticate", `Basic realm="signed.codes admin"`)
+	httpError(w, http.StatusUnauthorized, err, msg, args...)
 }
 
 func badRequest(w http.ResponseWriter, err error, msg string, args ...interface{}) {
