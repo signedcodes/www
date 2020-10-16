@@ -40,6 +40,10 @@ html body {
 }
 
 .fundraise-radio {
-  width: 100%;
+  width: 3%;
   opacity: 1;
+  text-align: left;
+}
+.radiolabel {
+  padding-left: 6%;
 }

@@ -97,17 +97,16 @@ All copies of this signed code are spoken for.
 
 <h2>Benefactor</h2>
 
-Select who should benefit from donations.
-
-Some options are only available if you are a US citizen due to campaign finance laws.
+<p>Select who should benefit from donations. Some options are only available if you are a US citizen due to campaign finance laws.</p>
 
 {{range .Fundraises}}
 <p>
 <label>
     <input id="{{.Slug}}" type="radio" name="fundraise" value="{{.Slug}}" class="fundraise-radio">
-    <a href="{{.Link}}">{{.Name}}</a>{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
+    <span class="radiolabel"><a href="{{.Link}}">{{.Name}}</a></span>{{if .USCitizenOnly}}<strong> (US Citizens only)</strong>{{end}}
 </label>
 </p>
+
 {{end}} {{/* end range .Fundraises */}}
 
 {{/* TODO: make radio buttons not ugly /  on right */}}
