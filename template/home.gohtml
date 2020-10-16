@@ -38,6 +38,12 @@ type="image/png"
         </div>
       </div>
       <div class="visual flex one-900">
+        {{if .Signers}}
+        <h2>Get signed code from:</h2>
+        {{end}}
+        {{range .Signers}}
+        <p><a href="{{.Link}}"><img style="vertical-align: middle;" src="{{.Avatar}}" alt="{{.Name}}" width="30" height="30" /><span style="vertical-align: middle;"> @{{.Login}}</a> ({{.Name}})</span></p>
+        {{end}}
       </div>
 
     </main>

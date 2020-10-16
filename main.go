@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	mrand "math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crawshaw.io/sqlite"
@@ -59,6 +61,8 @@ func main() {
 	checkFatal(err)
 	err = srv.createTables()
 	checkFatal(err)
+
+	srv.updateHomeSigners()
 
 	// Pages:
 	//   /: home page
@@ -185,8 +189,50 @@ func templateNamed(s string) *template.Template {
 	return parsed
 }
 
+var homeSigners atomic.Value // of []*Signer
+
+func (s *Server) updateHomeSigners() {
+	conn := s.DBPool.Get(context.Background())
+	update := func() {
+		const signersWithSnippetsQuery = `select distinct signer.login, signer.name, signer.avatar from signer inner join snippet on signer.login = snippet.signer;`
+		var signers []*Signer
+		step := func(stmt *sqlite.Stmt) error {
+			signer := new(Signer)
+			signer.Login = stmt.ColumnText(0)
+			signer.Name = stmt.ColumnText(1)
+			signer.Avatar = stmt.ColumnText(2)
+			signer.Link = "/" + signer.Login
+			signers = append(signers, signer)
+			return nil
+		}
+		err := sqlitex.Exec(conn, signersWithSnippetsQuery, step)
+		checkLog(err)
+		// TODO: sort somehow. maybe hide signers with no available snippets.
+		mrand.Shuffle(len(signers), func(i, j int) { signers[i], signers[j] = signers[j], signers[i] })
+		homeSigners.Store(signers)
+	}
+
+	update()
+	go func() {
+		for {
+			if *flagDev {
+				time.Sleep(time.Second)
+			} else {
+				time.Sleep(15 * time.Second)
+			}
+			update()
+		}
+	}()
+}
+
 func (s *Server) HandleHome(w http.ResponseWriter, r *http.Request) {
-	err := templateNamed("home").Execute(w, nil)
+	dot := &struct {
+		Signers []*Signer
+	}{
+		// TODO: enable when we're  off the  ground
+		// Signers: homeSigners.Load().([]*Signer),
+	}
+	err := templateNamed("home").Execute(w, dot)
 	checkLog(err)
 }
 
