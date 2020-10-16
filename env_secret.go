@@ -3,17 +3,25 @@ package main
 import "os"
 
 func GitHubOauthClientID() string {
-	if GitHubClientID == "" {
+	s := GitHubClientID
+	if *flagDev {
+		s = GitHubDevClientID
+	}
+	if s == "" {
 		return os.Getenv("GITHUB_CLIENT_ID")
 	}
-	return GitHubClientID
+	return s
 }
 
 func GitHubOauthClientSecret() string {
-	if GitHubClientSecret == "" {
+	s := GitHubClientSecret
+	if *flagDev {
+		s = GitHubDevClientSecret
+	}
+	if s == "" {
 		return os.Getenv("GITHUB_CLIENT_SECRET")
 	}
-	return GitHubClientSecret
+	return s
 }
 
 func SessionsSecret() []byte {
