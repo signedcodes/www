@@ -43,3 +43,7 @@ html body {
   width: 100%;
   opacity: 1;
 }
+
+.preview {
+  border: 5px double black;
+}
