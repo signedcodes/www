@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"crawshaw.io/sqlite"
@@ -160,9 +161,32 @@ type Server struct {
 	DBPool   *sqlitex.Pool
 }
 
+var (
+	templatesMu sync.Mutex
+	templates   sync.Map
+)
+
+func templateNamed(s string) *template.Template {
+	if *flagDev {
+		return template.Must(template.ParseFiles("template/" + s + ".gohtml"))
+	}
+	t, ok := templates.Load(s)
+	if ok {
+		return t.(*template.Template)
+	}
+	templatesMu.Lock()
+	defer templatesMu.Unlock()
+	t, ok = templates.Load(s)
+	if ok {
+		return t.(*template.Template)
+	}
+	parsed := template.Must(template.ParseFiles("template/" + s + ".gohtml"))
+	templates.Store(s, parsed)
+	return parsed
+}
+
 func (s *Server) HandleHome(w http.ResponseWriter, r *http.Request) {
-	t := template.Must(template.ParseFiles("template/home.gohtml"))
-	err := t.Execute(w, nil)
+	err := templateNamed("home").Execute(w, nil)
 	checkLog(err)
 }
 
@@ -406,7 +430,7 @@ func renderSignerPage(w http.ResponseWriter, r *http.Request, signer *Signer) {
 		return
 	}
 
-	t := template.Must(template.ParseFiles("template/signer.gohtml"))
+	t := templateNamed("signer")
 	dot := &struct {
 		Signer          *Signer
 		Fundraises      []Fundraise
@@ -585,7 +609,7 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleSignUp(w http.ResponseWriter, r *http.Request) {
-	t := template.Must(template.ParseFiles("template/signup.gohtml"))
+	t := templateNamed("signup")
 	dot := &struct {
 		ClientID string
 	}{
@@ -596,7 +620,7 @@ func (s *Server) HandleSignUp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleHelp(w http.ResponseWriter, r *http.Request) {
-	t := template.Must(template.ParseFiles("template/help.gohtml"))
+	t := templateNamed("help")
 	err := t.Execute(w, nil)
 	checkLog(err)
 }
@@ -699,7 +723,7 @@ func (s *Server) HandleVolunteerUnrendered(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	t := template.Must(template.ParseFiles("template/unrendered.gohtml"))
+	t := templateNamed("unrendered")
 	dot := &struct {
 		Unrendered []*Snippet
 		CSRF       template.HTML
@@ -787,7 +811,7 @@ func (s *Server) HandleAdminCSV(w http.ResponseWriter, r *http.Request) {
 		msg = fmt.Sprintf("updated %d entries", len(entries))
 	}
 
-	t := template.Must(template.ParseFiles("template/admin_csv.gohtml"))
+	t := templateNamed("admin_csv")
 	dot := &struct {
 		Msg  string
 		CSRF template.HTML
