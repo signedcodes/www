@@ -1,0 +1,12 @@
+<html>
+<head>
+<title>signed.codes: volunter unrendered</title>
+</head>
+<body>
+
+{{range $i, $snippet := .Unrendered}}
+<h1>{{$i}}</h1>
+<pre>{{$snippet.Code}}</pre>
+{{end}}
+
+</body>

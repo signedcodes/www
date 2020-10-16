@@ -11,4 +11,7 @@ var (
 
 	AdminUser string
 	AdminPass string
+
+	VolunteerUser string
+	VolunteerPass string
 )

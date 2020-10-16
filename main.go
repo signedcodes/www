@@ -70,8 +70,11 @@ func main() {
 
 	admin := m.PathPrefix("/admin/").Subrouter()
 	admin.HandleFunc("/csv", srv.HandleAdminCSV)
-	admin.HandleFunc("/unrendered", srv.HandleAdminUnrendered)
 	admin.Use(srv.authAdmin)
+
+	volunteer := m.PathPrefix("/volunteer/").Subrouter()
+	volunteer.HandleFunc("/unrendered", srv.HandleVolunteerUnrendered)
+	volunteer.Use(srv.authVolunteer)
 
 	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
 	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
@@ -603,8 +606,47 @@ func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
-func (s *Server) HandleAdminUnrendered(w http.ResponseWriter, r *http.Request) {
-	// TODO: look up all signer entries, find ones with code but no renderings, display those
+func (s *Server) HandleVolunteerUnrendered(w http.ResponseWriter, r *http.Request) {
+	conn := s.DBPool.Get(r.Context())
+	if conn == nil {
+		// remote hung up?!
+		return
+	}
+	defer s.DBPool.Put(conn)
+
+	var unrendered []*Snippet
+	const allSnippetsQuery = `select id, code, quantity from snippet;`
+	step := func(stmt *sqlite.Stmt) error {
+		snippet := &Snippet{
+			ID:       stmt.ColumnText(0),
+			Code:     stmt.ColumnText(1),
+			Quantity: stmt.ColumnInt(2),
+		}
+		err := snippet.populate(conn)
+		if err != nil {
+			return err
+		}
+		if snippet.RenderedURL == "" {
+			unrendered = append(unrendered, snippet)
+		}
+		return nil
+	}
+	err := sqlitex.Exec(conn, allSnippetsQuery, step)
+	if err != nil {
+		internalServerError(w, err, "all sinppet lookup failed")
+		return
+	}
+
+	t := template.Must(template.ParseFiles("template/unrendered.gohtml"))
+	dot := &struct {
+		Unrendered []*Snippet
+		CSRF       template.HTML
+	}{
+		Unrendered: unrendered,
+		CSRF:       csrf.TemplateField(r),
+	}
+	err = t.Execute(w, dot)
+	checkLog(err)
 }
 
 func (s *Server) HandleAdminCSV(w http.ResponseWriter, r *http.Request) {
@@ -696,6 +738,14 @@ func (s *Server) HandleAdminCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authAdmin(next http.Handler) http.Handler {
+	return s.basicAuth(next, AdminUsername(), AdminPassword())
+}
+
+func (s *Server) authVolunteer(next http.Handler) http.Handler {
+	return s.basicAuth(next, VolunteerUsername(), VolunteerPassword())
+}
+
+func (s *Server) basicAuth(next http.Handler, wantUser, wantPass string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		if !ok {
@@ -703,7 +753,7 @@ func (s *Server) authAdmin(next http.Handler) http.Handler {
 			return
 		}
 		// TODO: rate limit, don't leak info via timing side channel, etc.
-		if user != AdminUsername() || pass != AdminPassword() {
+		if user != wantUser || pass != wantPass {
 			unauthorized(w, nil, "bad auth")
 			return
 		}

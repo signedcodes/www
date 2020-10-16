@@ -43,3 +43,17 @@ func AdminPassword() string {
 	}
 	return AdminPass
 }
+
+func VolunteerUsername() string {
+	if len(VolunteerUser) == 0 {
+		return os.Getenv("VOLUNTEER_USERNAME")
+	}
+	return VolunteerUser
+}
+
+func VolunteerPassword() string {
+	if len(VolunteerPass) == 0 {
+		return os.Getenv("VOLUNTEER_PASSWORD")
+	}
+	return VolunteerPass
+}
