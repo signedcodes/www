@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +28,7 @@ import (
 	"github.com/gorilla/csrf"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 var flagDev = flag.Bool("dev", false, "run as dev environment")
@@ -79,18 +82,77 @@ func main() {
 	m.PathPrefix("/").Methods("GET").HandlerFunc(srv.HandleSigner)
 	m.PathPrefix("/").Methods("POST").HandlerFunc(srv.HandleSignerSubmit)
 
-	// TODO: https when not -dev
-	addr := ":58347"
-	log.Printf("listening on %v", addr)
-
 	CSRF := csrf.Protect(
 		CSRFSecret(),
 		csrf.Secure(!*flagDev),
 		csrf.SameSite(csrf.SameSiteLaxMode),
 	)
 	handler := CSRF(m)
-	err = http.ListenAndServe(addr, handler)
+
+	if *flagDev {
+		addr := ":58347"
+		log.Printf("listening on %v", addr)
+		err = http.ListenAndServe(addr, handler)
+		checkFatal(err)
+		return
+	}
+
+	// prod
+	certsDir := dataDir + "certs"
+	err = os.MkdirAll(certsDir, 0777)
 	checkFatal(err)
+
+	// Set up SSL cert using Let's Encrypt.
+	certManager := &autocert.Manager{
+		Prompt: autocert.AcceptTOS,
+		HostPolicy: func(ctx context.Context, host string) error {
+			if host == "signed.codes" {
+				return nil // OK
+			}
+			return fmt.Errorf("autocert: got unrecognized host %q", host)
+		},
+		Cache: autocert.DirCache(certsDir),
+		Email: "hello@signed.codes",
+	}
+
+	c := make(chan error, 2)
+
+	// Create and start server.
+	server := &http.Server{
+		Handler:           handler,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       5 * time.Minute,
+	}
+	server.Addr = ":443"
+	server.TLSConfig = &tls.Config{GetCertificate: certManager.GetCertificate}
+	go func() {
+		log.Printf("listening on %v", server.Addr)
+		c <- server.ListenAndServeTLS("", "")
+	}()
+
+	redirect := func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://signed.codes"+r.URL.String(), http.StatusFound)
+	}
+	insecureServer := &http.Server{
+		// Give autocert handler first crack at all requests
+		// in order to handle Let's Encrypt auth callbacks.
+		Handler:           certManager.HTTPHandler(http.HandlerFunc(redirect)),
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       5 * time.Minute,
+		Addr:              ":80",
+	}
+	go func() {
+		log.Printf("listening on %v", insecureServer.Addr)
+		c <- insecureServer.ListenAndServe()
+	}()
+
+	for err = range c {
+		checkFatal(err)
+	}
 }
 
 type Server struct {
