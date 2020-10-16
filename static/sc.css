@@ -47,3 +47,7 @@ html body {
 .radiolabel {
   padding-left: 6%;
 }
+
+.preview {
+  border: 5px double black;
+}
