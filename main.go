@@ -452,6 +452,8 @@ func (s *Server) HandleSignerSubmit(w http.ResponseWriter, r *http.Request) {
 	signer.Snippets = append(signer.Snippets, snippet)
 
 	renderSignerPage(w, r, signer)
+
+	notify("new snippet", "from %s", signer.Login)
 }
 
 func (s *Server) HandleSigner(w http.ResponseWriter, r *http.Request) {
@@ -652,6 +654,8 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	checkLog(err)
 
 	http.Redirect(w, r, "/"+userInfoResponse.Login, http.StatusFound)
+
+	notify("new signer", "%s", userInfoResponse.Login)
 }
 
 func (s *Server) HandleSignUp(w http.ResponseWriter, r *http.Request) {
@@ -736,6 +740,8 @@ func (s *Server) HandleDonate(w http.ResponseWriter, r *http.Request) {
 	// Redirect to:
 	url := "https://secure.actblue.com/donate/signed-codes-" + snippet.Slug + "?" + params.Encode()
 	http.Redirect(w, r, url, http.StatusFound)
+
+	notify("new donation", "signer %s, $%d (%d available of %d)", signer.Login, snippet.Amount, snippet.Available, snippet.Quantity)
 }
 
 func (s *Server) HandleVolunteerUnrendered(w http.ResponseWriter, r *http.Request) {
@@ -946,4 +952,29 @@ func checkLog(err error) {
 		// TODO: print a little stack trace
 		log.Print(err)
 	}
+}
+
+// send myself a notification. best effort.
+func notify(title string, msg string, args ...interface{}) {
+	if *flagDev {
+		return
+	}
+	if PushoverToken() == "" || PushoverUserKey() == "" {
+		return
+	}
+	go func() {
+		form := make(url.Values)
+		form.Set("token", PushoverToken())
+		form.Set("user", PushoverUserKey())
+		form.Set("title", title)
+		form.Set("message", fmt.Sprintf(msg, args...))
+		// TODO: priority?
+		// priority - send as -2 to generate no notification/alert, -1 to always send as a quiet notification, 1 to display as high-priority and bypass the user's quiet hours, or 2 to also require confirmation from the user
+		resp, err := http.PostForm("https://api.pushover.net/1/messages.json", form)
+		checkLog(err)
+		if err != nil {
+			return
+		}
+		resp.Body.Close()
+	}()
 }

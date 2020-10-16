@@ -17,4 +17,7 @@ var (
 
 	VolunteerUser string
 	VolunteerPass string
+
+	PushoverTok  string
+	PushoverUser string
 )

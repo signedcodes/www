@@ -65,3 +65,17 @@ func VolunteerPassword() string {
 	}
 	return VolunteerPass
 }
+
+func PushoverToken() string {
+	if PushoverTok == "" {
+		return os.Getenv("PUSHOVER_TOKEN")
+	}
+	return PushoverTok
+}
+
+func PushoverUserKey() string {
+	if PushoverUser == "" {
+		return os.Getenv("PUSHOVER_USER")
+	}
+	return PushoverUser
+}
